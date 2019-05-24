@@ -1,0 +1,658 @@
+;; Generation of QMNIST data from NIST pngs
+;;
+;; Copyright (c) Facebook, Inc. and its affiliates.
+;; All rights reserved.
+;; 
+;; This source code is licensed under the BSD-style license found in the
+;; LICENSE file in the root directory of this source tree.
+
+(libload "libimage/image-io")
+(libload "libimage/fimage")
+(libload "libimage/ubimage")
+(libload "libidx/idx-io")
+
+
+;;; ----------------------------
+;;; mnist
+
+(when (dirp "mnist")
+  (defvar mnist-train-img (load-matrix "mnist/train-images-idx3-ubyte"))
+  (defvar mnist-train-lbl (load-matrix "mnist/train-labels-idx1-ubyte"))
+  (defvar mnist-test-img (load-matrix "mnist/t10k-images-idx3-ubyte"))
+  (defvar mnist-test-lbl (load-matrix "mnist/t10k-labels-idx1-ubyte")) )
+
+;;; ----------------------------
+;;; nist-dir
+
+(defvar nist-dir (concat-fname "1stEdition1995"))
+
+;;; read all writer directories
+
+(de read-all-strings(fname)
+  (let ((r ()))
+    (reading fname
+        (while (<> (skip-char) "\e")
+          (setq r (cons (read-string) r))) ) 
+    (reverse r) ) )
+
+(when (dirp nist-dir)
+  (let* ((w (concat-fname nist-dir "data/by_write"))
+         (s (sprintf "|find '%s' -name 'd*' -type d -print | sort" w)) )
+    (defvar all-writers (read-all-strings s)) ) )
+
+;;; count images
+
+(de count-images(writers)
+  (let ((c 0))
+    (each ((fname writers))
+      (incr c (reading (concat fname ".cls") (read))) )
+    c )  )
+
+;;; get hsf from writer directory
+
+(de parse-writer-name(wdir)
+  (let ((x (regex-extract ".*/hsf_([0-9]+)/f([0-9]+)_[0-9]+/(d[0-9_]+)" wdir)))
+    (list (val (car x)) (val (cadr x)) (caddr x))))
+
+(defparameter png-template (htable))
+(each ((w all-writers))
+  (let (((hsf wid dname) (parse-writer-name w)))
+    (png-template wid (concat w "/" dname "_%04d.png")) ) )
+
+;;; read cls file for given writer
+
+(de read-cls-file(fname)
+    (reading (concat fname ".cls")
+      (let ((r ())
+            (n (read)) )
+        (while (<> (skip-char) "\e")
+          (setq r (cons (read) r)) )
+        (setq r (reverse r))
+        (when (<> n (length r))
+          (printf "warning (%s) expected %d got %d\n"
+                  n (length r)) )
+        r ) ) )
+
+
+;;; ----------------------------
+;;; crop a fimage
+
+(de fim-bbox-sub(hist l r thres)
+  ((-idx1- (-flt-)) hist)
+  ((-int-) l r)
+  ((-flt-) thres)
+  (let ((sum 0))
+    ((-flt-) sum)
+    (while (and (< l r) (<= sum thres))
+      (incr sum (hist l))
+      (incr l 1) )
+    (incr l -1) )
+  (let ((sum 0))
+    ((-flt-) sum)
+    (while (and (< l r) (<= sum thres))
+      (incr sum (hist (1- r)))
+      (incr r -1) )
+    (incr r 1) )
+  (list l r) )
+
+(de fim-bbox-sub2(hist l r) ;;; NEW VERSION
+  ((-idx1- (-flt-)) hist)
+  ((-int-) l r)
+  (let ((sum ((idx-sum hist)))
+        (frac 0))   ;;; was 0.1, then 0.05, now 0
+    ((-flt-) sum frac)
+    (let ((z (fim-bbox-sub hist l r (* sum frac)))
+          (ll 0)(rr 0))
+      ((-int-) ll rr)
+      (setq ll (nth 0 z))
+      (setq rr (nth 1 z))
+      (while (and (> ll 0) (> (hist (1- ll)) 0))
+        (incr ll -1) )
+      (while (and (< rr r) (> (hist rr) 0))
+        (incr rr) )
+      (list ll rr) ) ) )
+
+(de fim-bbox(fim)
+  ((-idx2- (-flt-)) fim)
+  (let* ((w (idx-dim fim 1))
+         (h (idx-dim fim 0))
+         (zw (float-matrix w))
+         (zh (float-matrix h))
+         (left 0)
+         (top 0)
+         (right w)
+         (bottom h) )
+    ((-int-) left top right bottom)
+    ;; clip horizontally
+    (idx-clear zw)
+    (idx-eloop ((fcol (narrow fim 0 (- bottom top) top))(zcol zw))
+      (idx-sum fcol zcol))
+    (let ((z (fim-bbox-sub2 zw left right)))
+      (setq left (nth 0 z))
+      (setq right (nth 1 z)) )
+    ;; clip vertically
+    (idx-clear zh)
+    (idx-bloop ((frow (narrow fim 1 (- right left) left))(zrow zh))
+      (idx-sum frow zrow))
+    (let ((z (fim-bbox-sub2 zh top bottom)))
+      (setq top (nth 0 z))
+      (setq bottom (nth 1 z)) )
+    ;; clip horizontally again
+    (idx-clear zw)
+    (idx-eloop ((fcol (narrow fim 0 (- bottom top) top))(zcol zw))
+      (idx-sum fcol zcol))
+    (let ((z (fim-bbox-sub zw left right 0)))
+      (setq left (nth 0 z))
+      (setq right (nth 1 z)) )
+    (list top left (- bottom top) (- right left)) ) )
+
+
+;;; ----------------------------
+;;; resample image using denker's algo
+
+(de fim-resample(in out)
+  ((-idx2- (-flt-)) in out)
+  (fim-resample-fudge in out 1) )
+
+(de fim-resample-fudge(in out fudge)
+  ((-idx2- (-flt-)) in out)
+  ((-double-) fudge)
+  (idx-clear out)
+  #{{
+       int ii1=($in)->dim[0], iim=($in)->mod[0];
+       int ij1=($in)->dim[1], ijm=($in)->mod[1];
+       int oi1=($out)->dim[0], oim=($out)->mod[0];
+       int oj1=($out)->dim[1], ojm=($out)->mod[1];
+       double iioff=(ii1)/2.0, ijoff=(ij1)/2.0;
+       double oioff=oi1/2.0, ojoff=oj1/2.0;
+       double scali = (double)oi1/(double)(ii1); 
+       double scalj = (double)oj1/(double)(ij1);
+       double ipix_surface = scali*scalj;
+
+#define i2oi(x) (oioff+(scali*(x-iioff)))
+#define i2oj(x) (ojoff+(scalj*(x-ijoff)))
+#define inmat(i,j) (*(IDX_PTR($in,flt)+i*iim+j*ijm))
+#define outmat(i,j) (*(IDX_PTR($out,flt)+i*oim+j*ojm))
+#define clip01(x) ((x<0)?0:(x>1)?1:x)
+  int i,j,kx,ky;
+  double x, y, xw, yw, dx, dy, dxw, dyw;
+  int xint, yint, xwint, ywint;
+  double inpix;
+
+  /* for each input pixel */
+  for (i=0; i<ii1; i++) { 
+    for (j=0; j<ij1; j++) {
+      /* fetch input pixel intensity */
+      inpix=inmat(i,j);
+      /* do the computation only if pixel is non 0 */
+      if (inpix!=0.0) {
+        /* compute coordinates of upper left corner of 
+           current input pixel in target map  */
+        x = i2oi(i);  y=i2oj(j);
+        /* same for lower right corner
+           there is a 0.99 here to prevent a mess up when the lower and/or
+           right edge falls exactly on a pixel boundary */
+        /* LB 2019 -- IN FACT THE FLOOR/CEIL CODE BELOW PREVENTS THE 
+           MESS FROM HAPPENING. BUT FUDGE=0.99 HAS ALIASING EFFECTS
+           THAT SHOW UP IN THE MNIST CHARACTERS! */
+        xw = x + $fudge * scali; yw = y + $fudge * scalj;
+        /* compute integer parts to know index of target pixels */
+        xint = (int)floor(x+1e-11); 
+        yint = (int)floor(y+1e-11); 
+        xwint= (int)ceil(xw-1e-11)-1.0; 
+        ywint= (int)ceil(yw-1e-11)-1.0;
+        /* fractional locations */
+        dx=xint+1-x; dx=clip01(dx); dxw=xw-xwint; dxw=clip01(dxw);
+	dy=yint+1-y; dy=clip01(dy); dyw=yw-ywint; dyw=clip01(dyw);
+        /* now update target map depending on where the pixel ends up */
+	if (xint==xwint){  /* is it split by a vertical pixel boundary */
+	  /* not split */
+	  if (yint==ywint){
+	    /* not split */
+	    outmat(xint,yint) += inpix*ipix_surface;
+	  } else { /* horizontally split */
+	    outmat(xint,yint) += inpix*dy*scali;
+	    outmat(xint,ywint) += inpix*dyw*scali;
+            for(ky=yint+1;ky<ywint;ky++)               /* fix upscaling */
+              outmat(xint,ky) += inpix*scali;          /* fix upscaling */
+	  }
+        } else { /* split vertically */
+	  if (yint==ywint) { /* is it also split horizontally */
+	    /* nope, just vertically */
+	    outmat(xint,yint) += inpix*dx*scalj;
+	    outmat(xwint,yint) += inpix*dxw*scalj;
+            for(kx=xint+1;kx<xwint;kx++)               /* fix upscaling */
+              outmat(kx,yint) += inpix*scalj;          /* fix upscaling */
+	  } else { /* arrgh, split in both directions */
+	    outmat(xint,yint) += inpix*dx*dy;
+	    outmat(xwint,yint) += inpix*dxw*dy;
+	    outmat(xint,ywint) += inpix*dx*dyw;
+	    outmat(xwint,ywint) += inpix*dxw*dyw;
+            for(kx=xint+1;kx<xwint;kx++) {             /* fix upscaling */
+              outmat(kx,yint) += inpix*dy;             /* fix upscaling */
+              outmat(kx,ywint) += inpix*dyw;           /* fix upscaling */
+            }                                          /* fix upscaling */
+            for(ky=yint+1;ky<ywint;ky++) {             /* fix upscaling */
+              outmat(xint,ky) += inpix*dx;             /* fix upscaling */
+              outmat(xwint,ky) += inpix*dxw;           /* fix upscaling */
+              for(kx=xint+1;kx<xwint;kx++)             /* fix upscaling */
+                outmat(kx,ky) += inpix;                /* fix upscaling */
+            }
+	  }
+        }
+      }  /* end of inpix!=0 */
+    }
+  } /* end for i */
+#undef inmat
+#undef outmat
+#undef i2oi
+#undef i2oj
+  }#}
+  out )
+
+
+;;; ----------------------------
+;;; barycenter
+
+(de fim-barycenter(fim)
+  ((-idx2- (-flt-)) fim)
+  (let ((x 0)(y 0)(s 0))
+    ((-flt-) x y s)
+    (cinline-idx2loop fim "flt" "p" "i" "j"
+                      #{{
+                         flt v = *p;
+                         $s += v;
+                         $x += v * (i + 0.5);
+                         $y += v * (j + 0.5);
+                      }#})
+    (list (/ x s) (/ y s))) )
+
+(de ubim-barycenter(ubim)
+  ((-idx2- (-ubyte-)) ubim)
+  (let ((x 0)(y 0)(s 0))
+    ((-flt-) x y s)
+    (cinline-idx2loop ubim "unsigned char" "p" "i" "j"
+                      #{{
+                         flt v = *p;
+                         $s += v;
+                         $x += v * (i + 0.5);
+                         $y += v * (j + 0.5);
+                      }#})
+    (list (/ x s) (/ y s))) )
+
+
+
+;;; ----------------------------
+;;; resample bbox into 20x20 matrix
+
+(de fim-crop(fim &optional (minsize 10)) ;; used to be 20
+  (let (((i j ii jj) (fim-bbox fim)))
+    (let ((m (max ii jj minsize)))
+      (when (< ii m)
+        (setq i (max 0 (- i (int (2/ (- m ii))))))
+        (setq ii m) )
+      (when (< jj m)
+        (setq j (max 0 (- j (int (2/ (- m jj))))))
+        (setq jj m) ) 
+      (when (or (< m minsize) (> m 120))
+        (printf "suspicious bbox %d\n" m) ) )
+    (narrow (narrow fim 0 ii i) 1 jj j) ) )
+
+(de fim-upsample(fim n) ;; upsample dimension n
+  (let* ((b (bound fim))
+         (d (length b)) )
+    (let ((bn (nthcdr n b)))
+      (rplaca bn (2* (car bn))) )
+    (let* ((f (apply fmatrix b))
+           (fu (unfold f n 2 2)) )
+      (idx-copy fim (select fu d 0))
+      (idx-copy fim (select fu d 1))
+      f ) ) )
+
+(de fim-resample-twenty(fim)
+  (let ((out (fmatrix 20 20))
+        (fimc (fim-crop fim)) )
+    ;; Upsampling before resampling
+    ;; The old resampling code did not upsample correctly.
+    ;; Although the old code in fim-resample has been fixed,
+    ;; it does not produce the same result as doubling
+    ;; the resolution and downsampling when fudge=0.99.
+    ;; I suspect this is what they did!
+    ;; This would be useless if fudge were 1.
+    (while (< (idx-dim fimc 0) 20)
+      (setq fimc (fim-upsample fimc 0)) )
+    (while (< (idx-dim fimc 1) 20)
+      (setq fimc (fim-upsample fimc 1)) )
+    ;;resample
+    (fim-resample-fudge fimc out 0.99)
+    out ) )
+
+
+;;; ----------------------------
+;;; mnist preprocessing
+
+(de fltimage2ubimage-rnd (in out bkgd ink)
+  ((-idx2- (-flt-)) in)
+  ((-idx2- (-ubyte-)) out)
+  ((-flt-) bkgd ink)
+  (let* ((a (/ 255 (- ink bkgd)))
+         (b (* a (- bkgd))) )
+    ((-flt-) a b)
+    (idx-bloop ((in in) (out out))
+      (cinline-idx1loop2 in "flt" out "unsigned char" "ip" "op" "i"
+        #{ flt x = floor((*ip)*$a+$b+0.5); 
+           *op = (unsigned char)((x<0)?0:(x>255)?255:x); #} ) ) )
+  out)
+
+(de fltimage2ubimage-floor (in out bkgd ink)
+  ((-idx2- (-flt-)) in)
+  ((-idx2- (-ubyte-)) out)
+  ((-flt-) bkgd ink)
+  (let* ((a (/ 255 (- ink bkgd)))
+         (b (* a (- bkgd))) )
+    ((-flt-) a b)
+    (idx-bloop ((in in) (out out))
+      (cinline-idx1loop2 in "flt" out "unsigned char" "ip" "op" "i"
+        #{ flt x = floor((*ip)*$a+$b); 
+           *op = (unsigned char)((x<0)?0:(x>255)?255:x); #} ) ) )
+  out)
+
+(de fim-mnist-prepro(fim)
+  (let ((out (ubyte-matrix 48 48)) ;; ten pixels padding around 28x28
+        (fin (fim-resample-twenty fim))
+        (in (ubyte-matrix 20 20)) )
+    (fltimage2ubimage-rnd fin in 0 (min 1 ((idx-sup fin))))
+    (let (((bi bj) (ubim-barycenter in)))
+      (let ((oi (int (- 15 bi)))
+            (oj (int (- 15 bj))) )
+        (setq oi (max 0 (min 28 (+ 10 oi))))
+        (setq oj (max 0 (min 28 (+ 10 oj))))
+        (idx-copy in (narrow (narrow out 0 20 oi) 1 20 oj))
+        (narrow (narrow out 0 28 10) 1 28 10) ) ) ) )
+
+(de ubim-mnist-prepro(ubim)
+  (let ((fim (fmatrix 128 128)))
+    (ubimage2fltimage ubim fim 1 0)
+    (fim-mnist-prepro fim) ) )
+
+
+;;; ----------------------------
+;;; process
+
+(de process(writers)
+  (let* ((n (count-images writers))
+         (img (ubyte-matrix n 28 28))
+         (lbl (int-matrix n 8))
+         (i 0))
+    (each ((writer writers))
+      (printf "Doing %s\n" writer)
+      (let (((hsf wnum dname) (parse-writer-name writer)))
+        (let ((cls (read-cls-file writer)) (j 0))
+          (while cls
+            (let ((c (car cls))
+                  (ubim (image-read-ubim
+                         (concat-fname writer (sprintf "%s_%04d.png" dname j)) )) )
+              (lbl i 0 (- c 30))
+              (lbl i 1 hsf)
+              (lbl i 2 wnum)
+              (lbl i 3 j)
+              (lbl i 4 c)
+              (lbl i 5 i)
+              (idx-copy (ubim-mnist-prepro ubim) (select img 0 i))
+              (setq cls (cdr cls))
+              (incr j)
+              (incr i) ) ) ) ) )
+    (when (<> i n)
+      (printf "count mismatch %d != %d\n" i n))
+    (list img lbl) ) )
+
+
+(de do-xnist()
+  (let (((imgs lbls) (process all-writers)))
+    ;; mark duplicates
+    (let ((z (htable)))
+      (for (i 0 (1- (idx-dim imgs 0)))
+           (let* ((x (select imgs 0 i))
+                  (j (z x)) )
+             (if (not j)
+                 (z x i)
+               (lbls i 6 j)
+               (printf "%d duplicate of %d\n" i j) ) ) ) )
+    ;; save
+    (setq all-imgs imgs)
+    (setq all-lbls lbls)
+    (save-idx3-ubyte "xnist-images-idx3-ubyte" imgs)
+    (save-idx2-int "xnist-labels-idx2-int" lbls) ) )
+
+
+
+;;; ----------------------------
+;;; count examples
+
+(de count-examples(lbls predicate)
+  (let ((n 0))
+    (for (i 0 (1- (idx-dim lbls 0)))
+         (when (apply predicate (lbls i ()))
+           (incr n)))
+    n ) )
+
+
+;;; ----------------------------
+;;; load
+
+(cond
+ ((filep "xnist-images-idx3-ubyte")
+  (defvar all-imgs (load-matrix "xnist-images-idx3-ubyte")) )
+ ((filep "xnist-images-idx3-ubyte.xz")
+  (defvar all-imgs (load-matrix "|xz -dc xnist-images-idx3-ubyte.xz")) )
+ ((filep "xnist-images-idx3-ubyte.gz")
+  (defvar all-imgs (load-matrix "|gunzip -dc xnist-images-idx3-ubyte.gz")) ) )
+
+(cond
+ ((filep "xnist-labels-idx2-int")
+  (defvar all-lbls (load-matrix "xnist-labels-idx2-int")) )
+ ((filep "xnist-labels-idx2-int.gz")
+  (defvar all-lbls (load-matrix "|gunzip -dc xnist-labels-idx2-int.gz")) ) )
+
+
+;;; ----------------------------
+;;; showimgs
+
+(de showimgs(imgs &optional (s 0) c)
+  (graphics-batch
+   (cls)
+   (let ((x 0)(y 2))
+     (while (and (< s (idx-dim imgs 0))
+                 (< (+ y 28) (ysize)) )
+       (when c
+         (while (and (< s (idx-dim imgs 0)) (not (c s)))
+           (incr s) ) )
+       (when (= x 0)
+         (gsave
+          (color color-fg)
+          (font "fixed")
+          (gprintf x (+ y 10) "%6d" (if lbls (lbls s 5) s)) )
+         (incr x 50) )
+       (when (< s (idx-dim imgs 0))
+         (let ((ubim (select imgs 0 s)))
+           (gsave (color-rgb 1 0 0)
+                  (draw-rect (1- x) (1- y) 29 29)) 
+           (gray-draw-matrix x y ubim 255 0) ) 
+         (incr x 30)
+         (when (> (+ x 28) (xsize))
+           (setq x 0)
+           (incr y 30) )
+         (incr s 1) ) ) ) ) )
+
+
+(de showimglist(imgs lst)
+  (graphics-batch
+   (cls)
+   (let ((x 0)(y 2)(s ()))
+     (while (and (setq s (car lst))
+                 (< s (idx-dim imgs 0))
+                 (< (+ y 28) (ysize)) )
+       (setq lst (cdr lst))
+       (when (= x 0)
+         (gsave
+          (color color-fg)
+          (font "fixed")
+          (gprintf x (+ y 10) "%6d" (if lbls (lbls s 5) s)) )
+         (incr x 50) )
+       (when (< s (idx-dim imgs 0))
+         (let ((ubim (select imgs 0 s)))
+           (gsave (color-rgb 1 0 0)
+                  (draw-rect (1- x) (1- y) 29 29)) 
+           (gray-draw-matrix x y ubim 255 0) ) 
+         (incr x 30)
+         (when (> (+ x 28) (xsize))
+           (setq x 0)
+           (incr y 30) )
+         (incr s 1) ) ) ) ) )
+
+;;; ----------------------------
+;;; make-quasi-mnist
+
+(de random-shuffle(mat)
+  (let ((n (idx-dim mat 0)))
+    (for (i 0 (- n 2))
+         (let* ((r (int (+ i (* (- n i) (rand)))))
+                (tmp (mat i)))
+           (mat i (mat r))
+           (mat r tmp) ) )
+    mat ) )
+
+(de collect-nist(ind)
+  (let ((imgs (ubyte-matrix 60000 28 28))
+        (lbls (int-matrix 60000 8)))
+    (for (i 0 59999)
+         (idx-copy (select all-imgs 0 (ind i)) (select imgs 0 i))
+         (idx-copy (select all-lbls 0 (ind i)) (select lbls 0 i)) )
+    (list imgs lbls) ) )
+  
+(de make-qmnist(firstw3 lastw3 first1)
+  (let ((ind (int-matrix 60000))
+        (j 0))
+    (for (i 0 (1- (idx-dim all-imgs 0)))
+         (let ((w (all-lbls i 2)))
+           (when (and (>= w firstw3) (< w lastw3))
+             (cond
+              ((> (all-lbls i 6) 0) ())        ;; duplicate
+              ((<> (all-lbls i 1) 4) (error))  ;; stay in hsf4
+              (t (ind j i) (incr j) ) ) ) ) )
+    (printf "%d chars from HSF4\n" j)
+    (while (< j (idx-dim ind 0))
+      (while (> (all-lbls first1 6) 0)         ;; skip duplicates
+        (incr first1) )
+      (ind j first1)
+      (incr j)
+      (incr first1) )
+    (random-shuffle ind)
+    (collect-nist ind) ) )
+
+(de save-tsv(fname mat)
+  (let ((rows (idx-dim mat 0))
+        (cols (idx-dim mat 1)))
+    (writing fname
+      (for (i 0 (1- rows))
+           (for (j 0 (1- cols))
+                (printf "%d%s" (mat i j)
+                        (if (= (1+ j) cols) "\n" "\t") ) ) ) )
+    fname ) )
+
+(de do-qmnist(&optional mnisttestmatches)
+  ;; train
+  (seed 314)
+  (let (((imgs lbls)  (make-qmnist 2100 2350 0)))
+    (save-idx3-ubyte "qmnist-train-images-idx3-ubyte" imgs)
+    (save-idx2-int "qmnist-train-labels-idx2-int" lbls)
+    (save-tsv "qmnist-train-labels-tsv" lbls) )
+  ;; test
+  (seed 314)
+  (let (((imgs lbls) (make-qmnist 2350 2600 35000)))
+    (when mnisttestmatches
+      (let ((ind (int-matrix 60000))
+            (nimgs (ubyte-matrix 60000 28 28))
+            (nlbls (int-matrix 60000 8))
+            (copy (lambda(i j)
+                    (copy-matrix (select imgs 0 i) (select nimgs 0 j))
+                    (copy-matrix (select lbls 0 i) (select nlbls 0 j)) )))
+        (for (i 0 59999) (ind i i))
+        (for (i 0 9999) (let ((j (mnisttestmatches i))) (copy j i) (ind j -1)))
+        (let ((k 0))
+          (for (i 10000 59999)
+               (while (< (ind k) 0) (incr k))
+               (copy k i)
+               (incr k) ) )
+        (setq imgs nimgs)
+        (setq lbls nlbls) ) )
+    (save-idx3-ubyte "qmnist-test-images-idx3-ubyte" imgs)
+    (save-idx2-int "qmnist-test-labels-idx2-int" lbls)
+    (save-tsv "qmnist-test-labels-tsv" lbls) )
+  () )
+
+(de update-mnist-matches()
+  (let ((objtime (alist-get 'mtime (fileinfo "mnist_train_matches.txt")))
+        (srctime (alist-get 'mtime (fileinfo "qmnist-train-images-idx3-ubyte"))) )
+    (when (and srctime (or (not objtime) (<= objtime srctime)))
+      (printf "Matching training set")
+      (sys "python hungarian_match_train.py") ) )
+  (let ((objtime (alist-get 'mtime (fileinfo "mnist_test_matches.txt")))
+        (srctime (alist-get 'mtime (fileinfo "qmnist-test-images-idx3-ubyte"))) )
+    (when (and srctime (or (not objtime) (<= objtime srctime)))
+      (printf "Matching test set")
+      (sys "python hungarian_match_test.py") ) ) )
+
+(de do-qmnist-reordered()
+  (update-mnist-matches)
+  (let ((matches (load-matrix "mnist_train_matches.txt"))
+        (ind (int-matrix 60000)) )
+    (copy-matrix (select matches 1 2) ind)
+    (let (((imgs lbls) (collect-nist ind)))
+      (save-idx3-ubyte "qmnist-train-images-idx3-ubyte" imgs)
+      (save-idx2-int "qmnist-train-labels-idx2-int" lbls)
+      (save-tsv "qmnist-train-labels-tsv" lbls) ) )
+  (let ((matches (load-matrix "mnist_test_matches.txt"))
+        (olbls (load-matrix "qmnist-test-labels-idx2-int"))
+        (ind (int-matrix 60000))
+        (tbl (htable))
+        (k 0) )
+    (for (i 0 9999)
+         (let ((j (matches i 2))) 
+           (ind k j)
+           (tbl j t)
+           (incr k) ) )
+    (for (i 0 59999)
+         (let ((j (olbls i 5)))
+           (when (not (tbl j))
+             (ind k j)
+             (incr k) ) ) )
+    (when (<> k 60000) (error))
+    (let (((imgs lbls) (collect-nist ind)))
+      (save-idx3-ubyte "qmnist-test-images-idx3-ubyte" imgs)
+      (save-idx2-int "qmnist-test-labels-idx2-int" lbls)
+      (save-tsv "qmnist-test-labels-tsv" lbls) )
+    t ) )
+
+(de count-classes(cls)
+  (let ((cnt (int-matrix 10)))
+    (for (i 0 (1- (idx-dim cls 0)))
+         (let ((c (cls i)))
+           (when (or (< c 0) (> c 9)) (error))
+           (cnt c (1+ (cnt c))) ) )
+    (cnt ()) ) )
+
+
+(de do-all()
+  (do-xnist)
+  (do-qmnist)
+  (do-qmnist-reordered) )
+
+;;; ----------------------------
+;;; make
+
+(dhc-make ()
+          fim-bbox-sub fim-bbox-sub2 fim-bbox
+          fim-resample-fudge fim-resample
+          fltimage2ubimage-rnd fltimage2ubimage-floor
+          fim-barycenter ubim-barycenter )

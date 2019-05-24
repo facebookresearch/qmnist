@@ -1,0 +1,149 @@
+diff -ru rnist-1.3.11-old/bin/makefile.am rnist-1.3.11/bin/makefile.am
+--- rnist-1.3.11-old/bin/makefile.am	2016-08-10 11:38:31.000000000 -0400
++++ rnist-1.3.11/bin/makefile.am	2018-02-08 14:42:52.000000000 -0500
+@@ -1,7 +1,7 @@
+ bin_PROGRAMS = conccls concmis mistopng dumpihdr misfrmit normmis numcls nummis showmis shuflmis
+ conccls_SOURCES = conccls.c
+ concmis_SOURCES = concmis.c
+-misotpng_SOURCES = mistopng.c
++mistopng_SOURCES = mistopng.c
+ dumpihdr_SOURCES = dumpihdr.c
+ misfrmit_SOURCES = misfrmit.c
+ normmis_SOURCES = normmis.c
+@@ -9,5 +9,7 @@
+ nummis_SOURCES = nummis.c
+ showmis_SOURCES = showmis.c
+ 
+-LDADD = $(top_srcdir)/lib/libnist.a
+-CPPFLAGS = -I$(top_srcdir)/include
++LDADD = $(top_srcdir)/lib/libnist.a -lm
++AM_CPPFLAGS = -I$(top_srcdir)/include
++
++mistopng_LDADD = $(LDADD) -lpng
+diff -ru rnist-1.3.11-old/bin/mistopng.c rnist-1.3.11/bin/mistopng.c
+--- rnist-1.3.11-old/bin/mistopng.c	2016-08-10 11:38:31.000000000 -0400
++++ rnist-1.3.11/bin/mistopng.c	2018-02-08 15:10:27.000000000 -0500
+@@ -11,7 +11,14 @@
+ #include <mis.h>
+ #include <png.h>
+ 
++char *get_misfile_path();
++char *get_pngfilename();
++void procargs();
++void save_png_files();
++void validate_png_files();
+ 
++
++int
+ main(argc, argv)
+ int argc; char **argv;
+ {  
+@@ -19,14 +26,16 @@
+   save_png_files(argv[1]);
+ }
+ 
++void
+ procargs(argc, argv)
+ int     argc; char **argv;
+ {
+    //if (argc != 2)
+    if (argc != 2)
+-      fatalerr("Usage", argv[0], "misfile and output pngfile");
++      fatalerr("Usage", argv[0], "misfile");
+ }
+ 
++void
+ save_png_files(misfile)
+ char *misfile; 
+ { 
+@@ -122,12 +131,13 @@
+      free(pngfilepath); 
+ } 
+ 
++char*
+ get_misfile_path(misfile)
+ char *misfile;
+ {
+     struct stat st;
+     int index = strlen(misfile) - 4;
+-    char *dir = (char *) malloc(index);
++    char *dir = (char *) malloc(index+1);
+     strncpy (dir, misfile, index);
+     dir[index] = '\0';
+     if (stat(dir, &st) == -1)
+@@ -135,44 +145,20 @@
+     return dir;
+ }
+ 
++char *
+ get_pngfilename(misfile, index)
+ char *misfile; int index;
+ {
+ 
+     char *ptr = strrchr(misfile, '/');
+-    char *pngfile = (char *) malloc(strlen(ptr) - 1);
+-    char *filenum = (char *) malloc(6);
+-    char *indexchr, *filename;
+-    strcpy(pngfile, ptr+1);
+-    asprintf(&indexchr, "%d", index);
+-
+-    int length = strlen(indexchr);
+-    if (length == 1)
+-	strcpy(filenum, "_0000");
+-    else if (length == 2)
+-	strcpy(filenum, "_000");
+-    else if (length == 3)
+-	strcpy(filenum , "_00");
+-    else if (length == 4)
+-	strcpy(filenum, "_0");
+-    else if (length == 5)
+-	strcpy(filenum, "_");
+-	
+-    strcat(filenum, indexchr);
+-    //concatenat filename HSF_<#>_<#>.png
+-    strcat(pngfile, filenum);
+-    strcat(pngfile, ".png");
+-
+-    filename = (char *) malloc(strlen(misfile) + strlen(pngfile) + 1);
+-    strcpy(filename, misfile);
+-    strcat(filename, "/");
+-    strcat(filename, pngfile);
+-
+-    free(pngfile);
+-    free(filenum);
++    char *filename;
++    ptr = (ptr) ? ptr+1 : misfile;
++    filename = malloc(strlen(misfile)+1+strlen(ptr)+16);
++    sprintf(filename,"%s/%s_%04d.png", misfile, ptr, index);
+     return filename;
+ }
+ 
++void
+ validate_png_files(pngfilepath)
+ char *pngfilepath;
+ {
+@@ -214,12 +200,14 @@
+     }
+ 
+ }
++
++int
+ get_expected_filenum(pngfilepath)
+ char *pngfilepath;
+ {
+     FILE *fp;
+     char line[6], *filenum;
+-    char *CLSfile = (char *) malloc(strlen(pngfilepath) + 4);
++    char *CLSfile = (char *) malloc(strlen(pngfilepath) + 5);
+     strcpy(CLSfile, pngfilepath);
+     strcat(CLSfile, ".CLS");
+ 
+diff -ru rnist-1.3.11-old/configure.in rnist-1.3.11/configure.in
+--- rnist-1.3.11-old/configure.in	2016-08-10 11:38:31.000000000 -0400
++++ rnist-1.3.11/configure.in	2018-02-08 14:38:13.000000000 -0500
+@@ -6,4 +6,4 @@
+ AC_CHECK_TOOL(AR, ar, :)
+ AC_PROG_LIBTOOL
+ CPPFLAGS=-Iinclude
+-AC_OUTPUT([include/config.h Makefile lib/Makefile bin/Makefile])
++AC_OUTPUT([Makefile lib/Makefile bin/Makefile])
