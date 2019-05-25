@@ -143,7 +143,7 @@ Here are a couple examples:
 from qmnist import QMNIST
 
 # the qmnist training set, download from the web if not found
-qtrain = QMNIST('_qmnist', train=True,download=True)  
+qtrain = QMNIST('_qmnist', train=True, download=True)  
 
 # the qmnist testing set, do not download.
 qtest = QMNIST('_qmnist', train=False)
@@ -163,7 +163,7 @@ If you find QMNIST useful, please cite the companion paper...
 ```bibtex
 @article{qmnistpaper,
    title = "Cold Case: The Lost MNIST Digits",
-   author = "Chhavi Yadad and L\'{e}on Bottou",
+   author = "Chhavi Yadav and L\'{e}on Bottou",
    year = 2019,
    ...
 }
