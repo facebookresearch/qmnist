@@ -169,14 +169,4 @@ More details found in the [companion paper](https://arxiv.org/abs/1905.10498).
    month = "may",
    url = "https://arxiv.org/abs/1905.10498"
 }
-``
-
-
-
-
-
-
-
-
-
-
+```
