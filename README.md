@@ -158,7 +158,7 @@ qall = QMNIST('_qmnist', what='nist', compat=False)
 
 ### 2.5. Citing QMNIST
 
-If you find QMNIST useful, please cite the companion paper...
+More details found in the [companion paper](https://arxiv.org/abs/1905.10498).
 
 ```bibtex
 @techreport{qmnistpaper,
