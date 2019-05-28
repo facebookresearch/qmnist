@@ -161,18 +161,16 @@ qall = QMNIST('_qmnist', what='nist', compat=False)
 If you find QMNIST useful, please cite the companion paper...
 
 ```bibtex
-@article{qmnistpaper,
+@techreport{qmnistpaper,
    title = "Cold Case: The Lost MNIST Digits",
-   author = "Chhavi Yadav and L\'{e}on Bottou",
+   author = "Chhavi Yadav and L\'{e}on Bottou",\
+   institution = "arxiv:1905.10498",
    year = 2019,
-   ...
+   month = "may",
+   url = "https://arxiv.org/abs/1905.10498"
 }
-```
+``
 
-
-## TODO
-
-- add proper bibtex for the companion paper
 
 
 
