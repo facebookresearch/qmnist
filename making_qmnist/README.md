@@ -4,7 +4,7 @@ This file explains how to regenerate the QMNIST files.
 
 ### Prerequisites
 
-The generation of the QWMNIST files is best performed
+The generation of the QMNIST files is best performed
 on a linux computer running Debian or Ubuntu.
 
 * Install `pytorch`, version 1.0, following the instructions of the [pytorch web site](http://pytorch.org).  We recommend using the anaconda method.
