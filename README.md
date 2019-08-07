@@ -91,7 +91,7 @@ The format of these gzipped files is very simlar to the format of the standard [
 |:------:|--------------|-------|
 | 0 | Character class | 0 to 9
 | 1 | NIST HSF series | 0, 1, or 4
-| 2 | NIST writer ID | 0-326 and 2100-2599  
+| 2 | NIST writer ID | 0-610 and 2100-2599  
 | 3 | Digit index for this writer | 0 to 149
 | 4 | NIST class code | 30-39
 | 5 | Global NIST digit index | 0 to 281769
