@@ -161,12 +161,11 @@ qall = QMNIST('_qmnist', what='nist', compat=False)
 More details found in the [companion paper](https://arxiv.org/abs/1905.10498).
 
 ```bibtex
-@techreport{qmnistpaper,
+@incollection{qmnist-2019,
    title = "Cold Case: The Lost MNIST Digits",
    author = "Chhavi Yadav and L\'{e}on Bottou",\
-   institution = "arxiv:1905.10498",
-   year = 2019,
-   month = "may",
-   url = "https://arxiv.org/abs/1905.10498"
+   booktitle = {Advances in Neural Information Processing Systems 32},
+   year = {2019},
+   publisher = {Curran Associates, Inc.},
 }
 ```
