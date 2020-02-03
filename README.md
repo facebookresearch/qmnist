@@ -59,6 +59,9 @@ the networks gives very similar scores for the two top classes.
 
 We describe below how to use QMNIST in order of increasing complexity.
 
+*Update - The Pytorch QMNIST loader described in section 2.4 below is now included in [torchvision](https://pytorch.org/docs/stable/torchvision/datasets.html#qmnist).*
+
+
 ### 2.1. Using the QMNIST extended testing set
 
 The simplest way to use the QMNIST extended testing set is 
@@ -134,6 +137,8 @@ digit for which this digit is a duplicate. Since duplicate digits have been elim
 from the QMNIST/MNIST training set and testing set, this never happens in the `qmnist-*` extended label files.
 
 #### 2.4. The Pytorch QMNIST loader
+
+*Update - The Pytorch QMNIST loader described here is now included in [torchvision](https://pytorch.org/docs/stable/torchvision/datasets.html#qmnist).*
 
 File `qmnist.py` contains a QMNIST data loader for the popular [Pytorch](http://pytorch.org) platform. It either loads the QMNIST data files provided in the same directory as the file `pytorch.py` or downloads them from the web when passing the option `download=True`. This data loader is compatible with the standard Pytorch MNIST data loader and also provided additional features whose documentation is best found in the comments located inside `pytorch.py`.
 
