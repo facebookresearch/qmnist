@@ -138,7 +138,7 @@ from the QMNIST/MNIST training set and testing set, this never happens in the `q
 
 #### 2.4. The Pytorch QMNIST loader
 
-*Update - The Pytorch QMNIST loader described here is now included in [torchvision](https://pytorch.org/docs/stable/torchvision/datasets.html#qmnist).*
+*Update - The Pytorch QMNIST loader described here is now included in [torchvision](https://pytorch.org/vision/stable/generated/torchvision.datasets.QMNIST.html#torchvision.datasets.QMNIST).*
 
 File `qmnist.py` contains a QMNIST data loader for the popular [Pytorch](http://pytorch.org) platform. It either loads the QMNIST data files provided in the same directory as the file `pytorch.py` or downloads them from the web when passing the option `download=True`. This data loader is compatible with the standard Pytorch MNIST data loader and also provided additional features whose documentation is best found in the comments located inside `pytorch.py`.
 
