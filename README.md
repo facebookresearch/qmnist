@@ -59,7 +59,7 @@ the networks gives very similar scores for the two top classes.
 
 We describe below how to use QMNIST in order of increasing complexity.
 
-*Update - The Pytorch QMNIST loader described in section 2.4 below is now included in [torchvision](https://pytorch.org/docs/stable/torchvision/datasets.html#qmnist).*
+*Update - The Pytorch QMNIST loader described in section 2.4 below is now included in [torchvision](https://pytorch.org/vision/stable/generated/torchvision.datasets.QMNIST.html#torchvision.datasets.QMNIST).*
 
 
 ### 2.1. Using the QMNIST extended testing set
